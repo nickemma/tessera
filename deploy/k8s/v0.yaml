@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tessera
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tessera-config
+  namespace: tessera
+data:
+  TESSERA_STORAGE: postgres
+  TESSERA_DATABASE_URL: postgres://tessera:tessera@postgres:5432/tessera?sslmode=disable
+  TESSERA_REDIS_URL: redis://redis:6379/0
+  TESSERA_MODEL_URL: http://model:8081
+  TESSERA_MODEL_NAME: mock-local
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tessera-schema
+  namespace: tessera
+data:
+  0001_init.sql: |
+    create extension if not exists pgcrypto;
+    create table if not exists tenants (id uuid primary key default gen_random_uuid(), name text not null, status text not null default 'active', created_at timestamptz not null default now());
+    create table if not exists api_keys (id uuid primary key default gen_random_uuid(), tenant_id uuid not null references tenants(id) on delete cascade, prefix text not null, key_hash bytea not null, label text not null default '', created_at timestamptz not null default now(), last_used_at timestamptz, revoked_at timestamptz);
+    create unique index if not exists api_keys_hash_idx on api_keys (key_hash);
+    create index if not exists api_keys_tenant_idx on api_keys (tenant_id);
+    create table if not exists usage_events (id text primary key, tenant_id uuid not null references tenants(id) on delete cascade, model text not null, input_tokens integer not null, output_tokens integer not null, cost_usd numeric(18,8) not null default 0, cache_hit boolean not null default false, fallback boolean not null default false, status text not null, occurred_at timestamptz not null);
+    create index if not exists usage_events_tenant_time_idx on usage_events (tenant_id, occurred_at);
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: tessera
+spec:
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          env:
+            - {name: POSTGRES_USER, value: tessera}
+            - {name: POSTGRES_PASSWORD, value: tessera}
+            - {name: POSTGRES_DB, value: tessera}
+          volumeMounts:
+            - {name: schema, mountPath: /docker-entrypoint-initdb.d/0001_init.sql, subPath: 0001_init.sql}
+          ports: [{containerPort: 5432}]
+      volumes:
+        - name: schema
+          configMap: {name: tessera-schema}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: tessera
+spec:
+  selector: {app: postgres}
+  ports: [{port: 5432, targetPort: 5432}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: tessera
+spec:
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports: [{containerPort: 6379}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: tessera
+spec:
+  selector: {app: redis}
+  ports: [{port: 6379, targetPort: 6379}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model
+  namespace: tessera
+spec:
+  selector:
+    matchLabels: {app: model}
+  template:
+    metadata:
+      labels: {app: model}
+    spec:
+      containers:
+        - name: model
+          image: tessera-mock-model:dev
+          ports: [{containerPort: 8081}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model
+  namespace: tessera
+spec:
+  selector: {app: model}
+  ports: [{port: 8081, targetPort: 8081}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: tessera
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: gateway}
+  template:
+    metadata:
+      labels: {app: gateway}
+    spec:
+      containers:
+        - name: gateway
+          image: tessera-gateway:dev
+          envFrom: [{configMapRef: {name: tessera-config}}]
+          ports: [{containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: 8080}, initialDelaySeconds: 3}
+          livenessProbe: {httpGet: {path: /healthz, port: 8080}, initialDelaySeconds: 10}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: tessera
+spec:
+  type: NodePort
+  selector: {app: gateway}
+  ports: [{port: 8080, targetPort: 8080, nodePort: 30080}]

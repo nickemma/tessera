@@ -10,24 +10,53 @@
 
 *vLLM on GPU nodes. Multi-tenant gateway with token budgets. Autoscaling on queue depth, not CPU. Every number in this README is measured, not estimated.*
 
-[Architecture](#architecture) • [RPD](docs/RPD.md) • [Engineering Design](docs/ENGINEERING.md) • [Benchmarks](docs/benchmarks.md) • [Runbook](docs/RUNBOOK.md)
+[Architecture](#architecture) • [API walkthrough](api.md) • [RPD](docs/RPD.md) • [Engineering Design](docs/ENGINEERING.md) • [Benchmarks](docs/benchmarks.md) • [Runbook](docs/RUNBOOK.md)
 
 ---
 
 ## Project Status
 
-> **Design published, implementation starting.** Nothing is claimed as shipped unless the table says so. Every benchmark cell reading `—` is unmeasured, and will not be filled with an estimate.
+> **v0 control-plane implementation complete.** Real-model and capacity measurements remain explicitly unmeasured until a local model runtime/weights or GPU environment is provided. Nothing is filled with an estimate.
 
 | Component | State |
 |---|---|
 | RPD, engineering design | Written |
 | Terraform GPU node pool | Not started |
 | vLLM deployment + model registry | Not started |
-| Gateway: auth, token budgets, routing | Not started |
+| Gateway: auth, token budgets, routing | v0 implemented; v1 routing pending |
 | Semantic cache | Not started |
 | Autoscaling on queue depth | Not started |
-| Observability: TTFT, tokens/sec, cost per tenant | Not started |
-| Load + capacity report | Not started |
+| Observability: basic metrics and logs | v0 implemented; request latency/TTFT metrics exposed; dashboards pending |
+| Load + capacity report | Control-plane sanity sample published; real-model capacity pending |
+
+## Run the local playground
+
+The v0 playground can run entirely in memory for fast development, or with PostgreSQL, Redis, and the local mock model through Compose:
+
+```bash
+make run
+```
+
+Open [http://localhost:8080/playground](http://localhost:8080/playground) in a browser. The page contains a local demo API key and can send both normal and streaming requests. The machine-readable API contract is available at [http://localhost:8080/openapi.json](http://localhost:8080/openapi.json).
+
+The local key, tenant, budget, and usage ledger reset whenever the gateway restarts. They are deliberately not production credentials.
+
+The same playground can be exercised from the CLI:
+
+```bash
+key=$(curl -fsS http://localhost:8080/playground | sed -n 's/.*id="key" value="\([^"]*\)".*/\1/p')
+go run ./cmd/tesserac -key "$key" -prompt "hello from the CLI"
+go run ./cmd/tesserac -key "$key" -stream -prompt "stream from the CLI"
+```
+
+For the dependency-backed playground and its automated smoke test:
+
+```bash
+make compose-up
+make e2e
+```
+
+Stop it with `make compose-down`.
 
 ---
 
@@ -216,6 +245,7 @@ The last row is a security property, not a performance one, and it is the reason
 | [`docs/ENGINEERING.md`](docs/ENGINEERING.md) | Design, build-vs-buy decisions, GPU economics |
 | [`docs/benchmarks.md`](docs/benchmarks.md) | Method, batch/throughput/TTFT curves, cost, break-even |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | "Inference is slow" and other 2am procedures |
+| [`api.md`](api.md) | Step-by-step local API and end-to-end testing walkthrough |
 | [`docs/adr/`](docs/adr) | Decisions and the alternatives that lost |
 
 ---

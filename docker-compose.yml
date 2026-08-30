@@ -6,9 +6,52 @@ services:
       POSTGRES_PASSWORD: tessera
       POSTGRES_DB: tessera
     ports: ["5432:5432"]
-    volumes: ["pgdata:/var/lib/postgresql/data"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations/0001_init.sql:/docker-entrypoint-initdb.d/0001_init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tessera"]
+      test: ["CMD-SHELL", "pg_isready -U tessera -d tessera"]
       interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  model:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: mock-model
+    expose: ["8081"]
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: gateway
+    ports: ["8080:8080"]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      TESSERA_STORAGE: postgres
+      TESSERA_DATABASE_URL: postgres://tessera:tessera@postgres:5432/tessera?sslmode=disable
+      TESSERA_REDIS_URL: redis://redis:6379/0
+      TESSERA_MODEL_URL: http://model:8081
+      TESSERA_MODEL_NAME: mock-local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      model:
+        condition: service_started
+
 volumes:
   pgdata:

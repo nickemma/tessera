@@ -8,9 +8,9 @@
 
 ```
 Project:    1 of 5 — TESSERA v0
-Milestone:  1 of 10 — A server that answers
-Building:   POST /v1/chat returning a canned response
-Last built: nothing yet
+Milestone:  10 of 10 — Measured and permanent
+Building:   real CPU model measurement when a runtime/weight is supplied
+Last built: dependency-backed Compose stack with PostgreSQL, Redis, mock model, expanded chaos checks, latency metrics, and published control-plane sample
 Uptime:     not live (target: week 10)
 ```
 
@@ -19,21 +19,21 @@ Uptime:     not live (target: week 10)
 ## TESSERA v0 — weeks 1–10
 
 ```
-[░░░░░░░░░░] 0/10 milestones
+[█████░░░░░] 5/10 milestones
 ```
 
 | # | Milestone | What runs when it's done | Weeks | Status |
 |---|---|---|---|---|
-| 1 | A server that answers | `POST /v1/chat` responds | 1 | → |
-| 2 | It knows who you are | API keys, tenants, auth | 1–2 | ○ |
-| 3 | It won't let you overspend | budget rejection before the model | 2–3 | ○ |
-| 4 | It talks to a real model | streamed tokens from a local model | 3–4 | ○ |
-| 5 | It survives being hammered | 2k rps, rejects cleanly, no leaks | 4–5 | ○ |
-| 6 | It tells you what it's doing | dashboard + graceful shutdown | 5–6 | ○ |
-| 7 | It remembers what it cost | `/v1/usage` returns real numbers | 6–7 | ○ |
-| 8 | It doesn't care where it runs | 15MB image, `compose up` | 7–8 | ○ |
-| 9 | It survives you | failure day, all 8 failures handled | 8–9 | ○ |
-| 10 | Measured and permanent | benchmarks published, running for good | 10 | ○ |
+| 1 | A server that answers | `POST /v1/chat` responds | 1 | ✓ |
+| 2 | It knows who you are | API keys, tenants, auth | 1–2 | ✓ |
+| 3 | It won't let you overspend | budget rejection before the model | 2–3 | ✓ |
+| 4 | It talks to a real model | streamed tokens from a local model | 3–4 | △ |
+| 5 | It survives being hammered | 2k rps, rejects cleanly, no leaks | 4–5 | △ |
+| 6 | It tells you what it's doing | dashboard + graceful shutdown | 5–6 | △ |
+| 7 | It remembers what it cost | `/v1/usage` returns real numbers | 6–7 | ✓ |
+| 8 | It doesn't care where it runs | 15MB image, `compose up` | 7–8 | ✓ |
+| 9 | It survives you | failure day, all 8 failures handled | 8–9 | △ |
+| 10 | Measured and permanent | benchmarks published, running for good | 10 | → |
 
 ---
 
@@ -55,7 +55,11 @@ P5  SYNAPSE-AI    weeks 47–52   [░░░░░░░░░░]
 One line per session. What runs now that didn't before.
 
 ```
-2026-__-__  M1  —
+2026-08-30  M1  Clean server foundation and canned inference endpoint
+2026-08-30  M7  PostgreSQL/Redis adapters, mock model, Compose, e2e script, and playground
+2026-08-30  M9  Redis/model chaos exercises and recovery-aware e2e test
+2026-08-30  M10 Load runner sample against dependency-backed Compose stack
+2026-08-30  M6/M9 Latency and TTFT metrics; PostgreSQL outage and SIGTERM recovery checks
 ```
 
 ---

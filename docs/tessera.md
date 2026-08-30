@@ -181,7 +181,7 @@ ML Infrastructure Engineer · Inference Engineer · AI Platform Engineer · GPU 
 
 ```
 tessera/
-├─ cmd/gateway/            ├─ cmd/tesserac/        (CLI)
+├─ cmd/gateway/
 ├─ internal/
 │   ├─ app/                composition root
 │   ├─ platform/           config, logging, metrics, tracing, errors
@@ -191,7 +191,8 @@ tessera/
 │   │   ├─ routing/
 │   │   ├─ metering/
 │   │   └─ inference/
-│   └─ providers/          vllm, openai-compatible, local
+│   └─ providers/          canned, vllm, openai-compatible, local
+├─ internal/transport/     HTTP transport adapters
 ├─ migrations/  ├─ deploy/{compose,k8s,terraform}
 ├─ bench/  ├─ docs/  └─ README.md
 ```

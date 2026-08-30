@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/nickemma/tessera/internal/chat"
 	"github.com/nickemma/tessera/internal/config"
@@ -18,8 +19,17 @@ func main() {
 		httpapi.NewChatHandler(chat.NewService()),
 	)
 
+	srv := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
 	slog.Info("gateway starting", "addr", cfg.Addr)
-	if err := http.ListenAndServe(cfg.Addr, router); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		slog.Error("server stopped", "err", err)
 		os.Exit(1)
 	}

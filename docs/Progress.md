@@ -49,22 +49,6 @@ P5  SYNAPSE-AI    weeks 47–52   [░░░░░░░░░░]
 
 ---
 
-## Interview track
-
-Runs every week regardless of milestone. Never merged into build time.
-
-| | Done | Target |
-|---|---|---|
-| DSA (NeetCode 150, in Go) | 0 | 60 by week 12 · 150 by week 30 |
-| Written system designs | 0 | 12 by week 12 |
-| Applications sent | 0 | 5/week now · 10–15 from week 26 |
-| Mock interviews | 0 | from week 20 |
-
-**DSA by pattern:** ○ arrays & hashing · ○ two pointers · ○ sliding window · ○ stack · ○ binary search · ○ linked list · ○ trees · ○ heap · ○ backtracking · ○ graphs · ○ intervals · ○ greedy · ○ 1-D DP
-
-**Saturdays:** ○ URL shortener · ○ rate limiter · ○ distributed cache · ○ news feed · ○ chat · ○ object store · ○ message queue · ○ autocomplete · ○ notifications · ○ payment ledger · ○ web crawler · ○ metrics pipeline
-
----
 
 ## Build log
 

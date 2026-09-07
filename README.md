@@ -1,14 +1,15 @@
 # TESSERA — LLM Inference Platform
 
-![Status](https://img.shields.io/badge/status-Building%20in%20public-orange)
-![Go](https://img.shields.io/badge/go-1.25-blue)
-![vLLM](https://img.shields.io/badge/serving-vLLM-green)
-![Kubernetes](https://img.shields.io/badge/k8s-GPU%20nodes-blue)
+![Status](https://img.shields.io/badge/status-v0%20complete-brightgreen)
+![Go](https://img.shields.io/badge/go-1.26-blue)
+![Serving](https://img.shields.io/badge/serving-OpenAI--compatible-green)
+![vLLM](https://img.shields.io/badge/vLLM%20on%20GPU-v1-lightgrey)
+![Kubernetes](https://img.shields.io/badge/k8s-manifest%20shipped-blue)
 ![License](https://img.shields.io/badge/license-APACHE-green)
 
 **Serving open models at a cost you can actually state.**
 
-*vLLM on GPU nodes. Multi-tenant gateway with token budgets. Autoscaling on queue depth, not CPU. Every number in this README is measured, not estimated.*
+*A multi-tenant inference gateway in Go — API keys, token budgets, rate limits, usage metering, and cost attribution enforced before the GPU. v0 is complete and runnable; vLLM on GPU nodes and autoscaling on queue depth are v1. Every number in this README is measured, not estimated — the unmeasured ones say so.*
 
 [Architecture](#architecture) • [API walkthrough](api.md) • [RPD](docs/RPD.md) • [Engineering Design](docs/ENGINEERING.md) • [Benchmarks](docs/benchmarks.md) • [Runbook](docs/RUNBOOK.md)
 
@@ -16,18 +17,35 @@
 
 ## Project Status
 
-> **v0 control-plane implementation complete.** Real-model and capacity measurements remain explicitly unmeasured until a local model runtime/weights or GPU environment is provided. Nothing is filled with an estimate.
+> **v0 is complete.** The control plane — auth, tenancy, budgets, rate limiting, metering, resilient provider routing, metrics, and a runnable local stack — is built, tested, and benchmarked. GPU-side work (vLLM, KServe, autoscaling, semantic cache) is **v1**, scoped but deliberately not started; every number below the v0 line is measured, and everything unmeasured says so.
 
-| Component | State |
+### What v0 ships
+
+| Capability | State |
 |---|---|
-| RPD, engineering design | Written |
-| Terraform GPU node pool | Not started |
-| vLLM deployment + model registry | Not started |
-| Gateway: auth, token budgets, routing | v0 implemented; v1 routing pending |
-| Semantic cache | Not started |
-| Autoscaling on queue depth | Not started |
-| Observability: basic metrics and logs | v0 implemented; request latency/TTFT metrics exposed; dashboards pending |
-| Load + capacity report | Control-plane sanity sample published; real-model capacity pending |
+| `POST /v1/chat`, `/v1/chat/completions`, `/v1/completions` (JSON + SSE streaming) | Done |
+| API-key authentication and tenant identity | Done |
+| Per-tenant token budgets, enforced before inference | Done |
+| Per-tenant rate limiting and a global concurrency ceiling | Done |
+| Usage metering and cost attribution via `GET /v1/usage` | Done |
+| Pluggable stores: in-memory or PostgreSQL + Redis | Done |
+| Provider layer: canned, OpenAI-compatible upstream, retry/timeout wrapper | Done |
+| Prometheus metrics at `/metrics`, including request latency and TTFT | Done |
+| Browser playground, `openapi.json`, and the `tesserac` CLI client | Done |
+| Docker image, Compose stack, Kubernetes manifest (`deploy/k8s/v0.yaml`) | Done |
+| Chaos exercises (Redis, model, PostgreSQL, SIGTERM) and an e2e smoke test | Done |
+| Load runner (`bench/`) with a published control-plane sample | Done |
+
+### What is v1 (not started, by design)
+
+| Capability | Why it waits |
+|---|---|
+| Terraform GPU node pool | Needs a funded GPU environment |
+| vLLM deployment + KServe model registry | Same |
+| Semantic cache (Redis + embeddings) | Only earns its complexity against a real model |
+| Autoscaling on queue depth (KEDA) | Requires a real queue behind a real engine |
+| Grafana dashboards and OTel traces | Metrics are exposed; visualization is v1 |
+| Real-model TTFT, throughput, GPU cost, break-even | Unmeasured until hardware exists — see [`docs/benchmarks.md`](docs/benchmarks.md) |
 
 ## Run the local playground
 
@@ -57,6 +75,27 @@ make e2e
 ```
 
 Stop it with `make compose-down`.
+
+Other targets: `make test` (race-enabled), `make build`, `make chaos` (failure exercises against the Compose stack), `make bench` (load runner), and `make real-model` (point the gateway at a local model — see [`docs/LOCAL_MODEL.md`](docs/LOCAL_MODEL.md)).
+
+### Configuration
+
+Everything is environment-driven, with in-memory defaults so the binary runs with no dependencies at all:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TESSERA_ADDR` | `:8080` | Listen address |
+| `TESSERA_LOG_LEVEL` | `info` | Structured log level |
+| `TESSERA_STORAGE` | `memory` | `memory` or `postgres` |
+| `TESSERA_DATABASE_URL` | — | PostgreSQL DSN; set it and Postgres is used for tenancy and the ledger |
+| `TESSERA_REDIS_URL` | — | Redis URL; set it and budgets and rate limits move to Redis |
+| `TESSERA_MODEL_URL` | — | OpenAI-compatible upstream; unset uses the canned provider |
+| `TESSERA_MODEL_NAME` | `canned-local` | Model name reported back to the client |
+| `TESSERA_MAX_CONCURRENT` | `32` | Global in-flight ceiling |
+| `TESSERA_RATE_LIMIT_PER_SEC` / `_BURST` | `10` / `20` | Per-tenant token bucket |
+| `TESSERA_TENANT_BUDGET` | `5000` | Tokens per tenant per period |
+| `TESSERA_REQUEST_TIMEOUT_SEC` | `60` | Upstream request deadline |
+| `TESSERA_COST_PER_MILLION` | `0` | USD per million tokens, used for cost attribution |
 
 ---
 
@@ -108,6 +147,10 @@ flowchart TB
     ARGO["Argo CD"] -.reconciles.-> KS
 ```
 
+**Built in v0:** the gateway, the usage ledger, the metrics surface, and the router's model-selection/fallback seam — with an OpenAI-compatible upstream standing in for vLLM (the mock model locally, any compatible endpoint in Compose or Kubernetes).
+
+**Left for v1:** everything downstream of the router — KServe, vLLM on GPU nodes, the model registry, KEDA autoscaling, and the semantic cache.
+
 ---
 
 ## The Request Path
@@ -117,9 +160,11 @@ POST /v1/chat/completions
    ↓
 Authenticate            tenant API key → tenant identity
    ↓
+Rate limit              per-tenant token bucket + global concurrency ceiling
+   ↓
 Budget check            tokens remaining this period; 429 with reset time if exhausted
    ↓
-Semantic cache          embed prompt → vector lookup; hit returns immediately
+Semantic cache          embed prompt → vector lookup; hit returns immediately   [v1]
    ↓
 Route                   model class + deadline → target InferenceService
    ↓                    (small model first where quality permits, escalate on failure)
@@ -140,11 +185,24 @@ Two properties worth naming:
 
 ## Cost and Latency — the actual deliverable
 
-These are the numbers this project exists to produce. **All cells are unmeasured until the load test runs.**
+These are the numbers this project exists to produce. v0 measured what a control plane can measure without a GPU; the rest stays empty rather than estimated.
+
+**Measured — v0 control plane** (Compose stack, mock upstream, 10 requests at concurrency 10; full method and environment in [`docs/benchmarks.md`](docs/benchmarks.md)):
+
+| Measurement | Result |
+|---|---|
+| Gateway overhead, JSON, p50 / p95 | 28.5 ms / 43.0 ms |
+| Gateway overhead, SSE, p50 / p95 | 34.2 ms / 53.1 ms |
+| Time to first token, SSE, p50 / p95 | 32.8 ms / 51.2 ms |
+| Success rate, both modes | 10/10 |
+
+This is gateway cost, not inference performance — the upstream returns immediately.
+
+**Unmeasured — needs a GPU environment (v1):**
 
 | Measurement | Target | Measured |
 |---|---|---|
-| Time to first token, p50 / p99 | < 300ms / < 1s | — |
+| Time to first token, real model, p50 / p99 | < 300ms / < 1s | — |
 | Inter-token latency, p99 | < 50ms | — |
 | Throughput at max batch, tokens/sec | — | — |
 | GPU utilization under sustained load | > 70% | — |
@@ -160,6 +218,8 @@ The batch-size vs throughput vs TTFT curve is the central artifact — it is the
 
 ## Service Level Objectives
 
+These are the operating contract for when TESSERA runs as a live service. v0 is a complete, runnable build, not a hosted deployment — no uptime is claimed against these numbers yet.
+
 | SLI | Definition | SLO |
 |---|---|---|
 | Availability | Non-5xx gateway responses ÷ total | 99.5% / 30d |
@@ -174,21 +234,23 @@ Deliberately *not* 99.9% availability. GPU capacity is finite and expensive; an 
 
 ## Metrics
 
-| Metric | Type | Labels | Question it answers |
-|---|---|---|---|
-| `tessera_ttft_seconds` | histogram | model, tenant | Is the first token slow, or the whole response? |
-| `tessera_inter_token_seconds` | histogram | model | Is generation slow once started? |
-| `tessera_queue_wait_seconds` | histogram | model | Are we capacity-bound? |
-| `tessera_batch_size` | histogram | model | Is continuous batching filling? |
-| `tessera_gpu_utilization` | gauge | node, gpu | Are we paying for idle silicon? |
-| `tessera_kv_cache_usage_ratio` | gauge | model | Are we about to preempt requests? |
-| `tessera_tokens_total` | counter | tenant, model, kind | What is each tenant consuming? |
-| `tessera_cost_usd_total` | counter | tenant, model | What does each tenant owe? |
-| `tessera_semantic_cache_hits_total` | counter | tenant | Is the cache earning its complexity? |
-| `tessera_budget_rejections_total` | counter | tenant | Who is hitting their ceiling? |
-| `tessera_fallback_total` | counter | from_model, to_model, reason | How often is quality being downgraded? |
+Exposed today at `/metrics` in Prometheus text format:
 
-`tessera_kv_cache_usage_ratio` is the one to alert on. When vLLM's KV cache fills, it preempts and recomputes — latency degrades before throughput does, so this leads the incident rather than trailing it.
+| Metric | Type | Question it answers |
+|---|---|---|
+| `tessera_request_latency_seconds` | histogram | How long does a full request take? |
+| `tessera_ttft_seconds` | histogram | Is the first token slow, or the whole response? |
+| `tessera_requests_total` / `tessera_completed_total` | counter | How many arrived, how many finished? |
+| `tessera_input_tokens_total` / `tessera_output_tokens_total` | counter | What is being consumed? |
+| `tessera_budget_rejections_total` | counter | Who is hitting their ceiling? |
+| `tessera_rate_limited_total` | counter | Who is being throttled? |
+| `tessera_saturated_total` | counter | How often is the concurrency ceiling reached? |
+
+Per-tenant cost and token totals are queryable through `GET /v1/usage`, backed by the PostgreSQL ledger.
+
+Planned for v1, once a real engine is behind the router: `tessera_inter_token_seconds`, `tessera_queue_wait_seconds`, `tessera_batch_size`, `tessera_gpu_utilization`, `tessera_kv_cache_usage_ratio`, `tessera_semantic_cache_hits_total`, `tessera_fallback_total`, plus tenant/model labels on the existing series.
+
+`tessera_kv_cache_usage_ratio` is the one to alert on when it lands. When vLLM's KV cache fills, it preempts and recomputes — latency degrades before throughput does, so this leads the incident rather than trailing it.
 
 ---
 
@@ -205,7 +267,9 @@ Deliberately *not* 99.9% availability. GPU capacity is finite and expensive; an 
 | Scale-to-zero cold start | First request after idle | Cold-start metric | Documented; minimum replica 1 for latency-sensitive models |
 | Prompt injection via cached response | Cross-tenant leakage | — | **Cache is namespaced per tenant.** No cross-tenant cache sharing, ever |
 
-The last row is a security property, not a performance one, and it is the reason the semantic cache is keyed on `(tenant, embedding)` rather than embedding alone.
+The last row is a security property, not a performance one, and it is the reason the semantic cache will be keyed on `(tenant, embedding)` rather than embedding alone.
+
+Four of these are exercised as executable checks in v0 via `make chaos`: Redis loss (budgets fail closed with 503), model-upstream loss (typed failure, no truncated stream), PostgreSQL loss (usage fails closed), and SIGTERM (graceful shutdown and recovery). The GPU, KV-cache, registry, and cold-start rows belong to v1.
 
 ---
 
@@ -224,6 +288,8 @@ The last row is a security property, not a performance one, and it is the reason
 | **Provisioning** | Terraform | GPU node pools as code, including spot/preemptible policy |
 | **Delivery** | Argo CD | GitOps reconciliation |
 | **Observability** | Prometheus · Grafana · OpenTelemetry | Traces span gateway → KServe → vLLM |
+
+In v0 the gateway, Redis, PostgreSQL, Go, Docker, and Kubernetes rows are live; vLLM, KServe, KEDA, MLflow, Terraform, Argo CD, Grafana, and OTel are v1 commitments. An OpenAI-compatible HTTP upstream sits where vLLM will, so the swap is a config change (`TESSERA_MODEL_URL`), not a rewrite.
 
 ---
 
@@ -245,8 +311,11 @@ The last row is a security property, not a performance one, and it is the reason
 | [`docs/ENGINEERING.md`](docs/ENGINEERING.md) | Design, build-vs-buy decisions, GPU economics |
 | [`docs/benchmarks.md`](docs/benchmarks.md) | Method, batch/throughput/TTFT curves, cost, break-even |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | "Inference is slow" and other 2am procedures |
+| [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) | Trust boundaries, key handling, tenant isolation |
+| [`docs/INCIDENTS.md`](docs/INCIDENTS.md) | Incident log |
+| [`docs/LOCAL_MODEL.md`](docs/LOCAL_MODEL.md) | Pointing the gateway at a real local model |
+| [`docs/Progress.md`](docs/Progress.md) | Milestone log and build history |
 | [`api.md`](api.md) | Step-by-step local API and end-to-end testing walkthrough |
-| [`docs/adr/`](docs/adr) | Decisions and the alternatives that lost |
 
 ---
 
